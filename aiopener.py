@@ -16,14 +16,10 @@ import sys
 from formatting.formatter import Formatter
 import logging
 
-#Global Variables
-_OSVersion = ''
-_version = '0.0.5' # Program's current version
+#Settings
+_version = '0.0.6' # Program's current version
 _filePath = os.path.splitext(__file__)[0]+'.exe' #returns PATH/TO/scriptname.exe
 _scriptname = Path(__file__).stem+'.exe' # returns scriptname.exe
-_downloadDIR = '/scripts/Python' # Unused
-_desktop = os.path.expanduser('~') + '\\Desktop\\' # unused
-states_dict = {"state":{"open":1,"work in progress":2,"closed":3},"substate":{"":1}} # state/substate dictionary
 creator = "dmcanady" # creator
 contributors = [] # add anyone who assisted with the script
 
@@ -38,14 +34,8 @@ async def main():
     computerInfo = await addTicket(serviceNow,CSNumber)
     await initTicket(username,computerInfo) # sets assigned to, technician to user
     # gets what type of ticket it is
-    if computerInfo.getTicket()["cat_item"] == 'Assignment':
-        await __assignment__(computerInfo, computerInfo.getTicket()["requested_for"])
-    elif computerInfo.getTicket()["cat_item"] == 'Return':
-        await __return__(computerInfo,serviceNow)
-    elif computerInfo.getTicket()["cat_item"] == 'Repair':
-        await __repair__(computerInfo)
-    elif computerInfo.getTicket()["cat_item"] == 'Life Cycle Management':
-        await __LCM__(computerInfo)
+    ticketTypes = {"Assignment":__assignment__,"Return":__return__,"Repair":__repair__,"Life Cycle Management":__LCM__}
+    await ticketTypes[computerInfo.getTicket()["cat_item"]](computerInfo)
 
 # opens programs and features for tech
 def uninstallApp(ticketType):
@@ -122,41 +112,33 @@ async def restart():
     time.sleep(1)
     os.system("shutdown /r /t 10") # set to restart computer after 10 seconds
 
-async def setInUse(computerInfo,__sysid__):
+async def setState(computerInfo,__sysid__,state):
+    states = {
+        "In Use" : {"install_status":1,"substatus":"","assigned_to":computerInfo.getTicket()},
+        "Return" : {"install_status":16,"substatus":"","stockroom":"IT Helpdesk Walkin Support"},
+        "LCMed" : {"install_status":6,"substatus":"pending_transfer","stockroom":"IT Helpdesk Walkin Support"}
+        }
+    if state == "In Use":
+         # Assigns customer as assigned to
+        await computerInfo.updateHardware(__sysid__,"assigned_to", states[state]["assigned_to"]["requested_for"])
+    else:
+        await computerInfo.updateHardware(__sysid__,"stockroom",states[state]["stockroom"])    
     # changes status to in use
-    user = computerInfo.getTicket()["requested_for"]
-    await computerInfo.updateHardware(__sysid__,"install_status",1)
+    await computerInfo.updateHardware(__sysid__,"install_status",states[state]["install_status"])
     # Sets substatus to None
-    await computerInfo.updateHardware(__sysid__,"substatus","")
-    # Assigns customer as assigned to
-    await computerInfo.updateHardware(__sysid__,"assigned_to",user)
+    await computerInfo.updateHardware(__sysid__,"substatus",states[state]["substatus"])
 
-async def setInStorage(computerInfo,__sysid__):
-    # Sets status to in IT Storage
-    await computerInfo.updateHardware(__sysid__,"install_status",16)
-    # Sets substate to None
-    await computerInfo.updateHardware(__sysid__,"substatus"," ")
-    # Supposed to set stockroom to IT Helpdesk Walkin Support - needs further testing
-    await computerInfo.updateHardware(__sysid__,"stockroom","IT Helpdesk Walkin Support")
-
-async def setLCMed(computerInfo,__sysid__):
-    # Sets status to in IT Storage
-    await computerInfo.updateHardware(__sysid__,"install_status",6)
-    # Sets substate to None
-    await computerInfo.updateHardware(__sysid__,"substatus","pending_transfer")
-    # Supposed to set stockroom to IT Helpdesk Walkin Support - needs further testing
-    await computerInfo.updateHardware(__sysid__,"stockroom","IT Helpdesk Walkin Support")
-
-async def __assignment__(computerInfo,user):
+#Processes by ticket type
+async def __assignment__(computerInfo):
     print("I am an assignment")
-    await setInUse(computerInfo.getHardware()["sys_id"])
+    await setState(computerInfo.getHardware()["sys_id"],"In Use")
     # Requested steps to take after
     print("Please run auto-assign")
     print("Check to make sure drivers have been updated.")
     
 async def __return__(computerInfo,serviceNow):
     print("I am a return")
-    setInStorage(computerInfo,computerInfo.getHardware()["sys_id"])
+    setState(computerInfo,computerInfo.getHardware()["sys_id"],"Return")
     # Returns true if tech states they uninstalled all licensed programs
     if uninstallApp("return"):
         assoc = input("Is there an associated assignment Ticket (y/n): ")
@@ -183,12 +165,10 @@ async def __repair__(computerInfo):
                                     "System checked for nonstandard applications.")
         print("Check to make sure drivers have been updated.")
 
-# NOT SETUP YET
 async def __LCM__(computerInfo):
     print("I am an LCM")
-    await setInUse(computerInfo,computerInfo.getHardware()["sys_id"])
-    await setLCMed(computerInfo,computerInfo.getLCM()["sys_id"])
-        
+    await setState(computerInfo,computerInfo.getHardware()["sys_id"],"In Use")
+    await setState(computerInfo,computerInfo.getLCM()["sys_id"],"LCMed")
 
 # Starts loop
 asyncio.run(main())
