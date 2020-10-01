@@ -1,7 +1,5 @@
 import asyncio
 import aiosnow
-#from gather import gatherer
-from snow import snowCommands
 import login
 import subprocess
 import os
@@ -29,7 +27,6 @@ creator = "dmcanady" # creator
 contributors = [] # add anyone who assisted with the script
 
 async def main():
-    start_time = time.time()
     welcome = Formatter(_scriptname,_version,creator,contributors)
     welcome.header()
     username,password = login.login() #validates login info
@@ -40,7 +37,6 @@ async def main():
     await initTicket(username,ticket)
     ticketTypes = {"Assignment":__assignment__,"Return":__return__,"Repair":__repair__,"Life Cycle Management":__LCM__}
     await ticketTypes[ticket["CS"].cat_item](ticket)
-    print(time.time()-start_time)
 
 async def initTicket(username,computerInfo):
     accept = input("Are you accepting this this ticket as your's (y/n): ")
@@ -60,7 +56,7 @@ async def initTicket(username,computerInfo):
             print("Please run me on {0}.".format(serial))
             print("Exiting...")
             input("Press any key to continue")
-            #sys.exit(0)
+            sys.exit(0)
 
 # opens programs and features for tech
 def uninstallApp(ticketType):
