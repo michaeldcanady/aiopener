@@ -11,7 +11,6 @@ import time
 @asyncinit
 class Computer():
     async def __init__(self,serviceNow:object,__sysid__:str=None):
-        # Commonly modified and used entries
         self.sys_id = __sysid__
         self.serviceNow = serviceNow
         await self.setVar()
@@ -30,11 +29,12 @@ class Computer():
         self.hardwareDict = await self.HardwareLookup(self.ticketDict["serial_number"])
 
     # updates or add values in the specified field in the hardware table
-    async def updateHardware(self,__sysid__,field, value):
+    async def updateHardware(self,__sysid__,field, values):
+        payload = dict(zip(field, values))
         async with HardwareModel(self.serviceNow, table_name="alm_hardware") as Hardware:
-            response = await Hardware.update(__sysid__, {field : value})
-        setattr(self,field,response[field])
-        print("updated {0} is {1}".format(field,response[field]))
+            response = await Hardware.update(__sysid__, payload)
+        for key in field:
+            setattr(self,key,response[key])
 
     def __eq__(self,other):
         if self.__class__ != other.__class__:

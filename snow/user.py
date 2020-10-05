@@ -15,6 +15,7 @@ class User(object):
         await self.setVar()
 
     async def setVar(self):
+        print("username:",self.sys_id)
         if self.sys_id == None:
             return {}
         async with SysUserModel(self.serviceNow, table_name="sys_user") as User:
@@ -24,11 +25,12 @@ class User(object):
         for key, value in Userdict.items():
             setattr(self, key, value)        
 
-    async def updateUser(self, field, value):
+    async def updateUser(self, field, values):
+        payload = dict(zip(field, values))
         async with SysUserModel(self.serviceNow, table_name="u_asset_returned") as User:
-            response = await User.update(self.sys_id, {field : value})
-        setattr(self,field,value)
-        print("updated {0} is {1}".format(field,response[field]))
+            response = await User.update(self.sys_id, payload)
+        for key in field:
+            setattr(self,key,response[key])
 
     def __eq__(self,other):
         if self.__class__ != other.__class__:
