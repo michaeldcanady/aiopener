@@ -1,6 +1,7 @@
 import asyncio
 import aiosnow
-import login
+from snow import snowCommands
+#import login
 import subprocess
 import os
 from pathlib import Path
@@ -18,45 +19,98 @@ from snow.ComputerSupport import CompSup
 from snow.computer import Computer
 from snow.user import User
 import wmi
+import traceback
+import re
+import cProfile
 
 #Settings
-_version = '0.0.8' # Program's current version
-_filePath = os.path.splitext(__file__)[0]+'.exe' #returns PATH/TO/scriptname.exe
-_scriptname = Path(__file__).stem+'.exe' # returns scriptname.exe
-creator = "dmcanady" # creator
+_version = "0.1.1" # Current Version
+_filePath = os.path.splitext(__file__)[0]+'.exe' # returns PATH/TO/script.exe
+_scriptname = Path(__file__).stem+'.exe' # returns script.exe
+creator = "dmcanady" # Creator
 contributors = [] # add anyone who assisted with the script
 
 async def main():
+    start_time = time.time()
+    logging.basicConfig(filename='example.log',level=logging.DEBUG)
     welcome = Formatter(_scriptname,_version,creator,contributors)
     welcome.header()
-    username,password = login.login() #validates login info
+    while True:
+        #username,password = login.login()
+        username = input("Username: ")
+        password = input("Password: ")
+        if "@" in username:
+            print("Usernames cannot be an email")
+        else:
+            break
     __instance__ = 'libertydev.service-now.com' # URL for service now
     serviceNow = aiosnow.Client(__instance__, basic_auth=(username,password)) # creates serviceNow session for creds provided
-    CSNumber = input("CS Number: ")
-    ticket = await genTicket(serviceNow,CSNumber)
-    await initTicket(username,ticket)
+    ticket = await genTicket(serviceNow)
+    await userAccept(username,ticket)
     ticketTypes = {"Assignment":__assignment__,"Return":__return__,"Repair":__repair__,"Life Cycle Management":__LCM__}
     await ticketTypes[ticket["CS"].cat_item](ticket)
+    print(time.time()-start_time)
+    welcome.footer()
+    
 
-async def initTicket(username,computerInfo):
-    accept = input("Are you accepting this this ticket as your's (y/n): ")
-    if accept == "y":
-        await computerInfo["CS"].updateCS("assigned_to",username)
-        await computerInfo["assigned"].__init__(computerInfo["CS"].serviceNow,computerInfo["CS"].assigned_to)
-        await computerInfo["CS"].updateCS("u_wi_primary_tech",username)
-        await computerInfo["technician"].__init__(computerInfo["CS"].serviceNow,computerInfo["CS"].u_wi_primary_tech)
-        await computerInfo["CS"].updateCS("state",2)
-        await computerInfo["CS"].updateCS("u_substate", " ")
-        #Will be used to verify the correct computer is being used.
-        print("verifying device's serial")
-        c = wmi.WMI()
-        serial = computerInfo["computer"].serial_number
-        cSerial = c.Win32_ComputerSystem()[0].Name
-        if(serial != cSerial):
-            print("Please run me on {0}.".format(serial))
-            print("Exiting...")
-            input("Press any key to continue")
+async def genTicket(serviceNow:object):
+    # Validates CS Number #
+    valid = False
+    while valid == False:
+        print("CS Format: CSXXXXXXX")
+        CSNumber = input("CSNumber: ")
+        valid = bool(re.match("^CS[0-9]{7}",CSNumber))
+    # Attempts to get ticket #
+    try:
+        CS = await CompSup(serviceNow,CSNumber)
+        # Validates that the ticket is available #
+        if((CS.state).key == 1 and CS.assigned_to == None and CS.u_wi_primary_tech == None):
+            while True:
+                accept = input("Do you want to accept this ticket (y/n): ")
+                if accept == "y":
+                    Comp = await Computer(serviceNow,CS.u_asset)
+                    assigned = await User(serviceNow,CS.assigned_to)
+                    if CS.assigned_to == CS.u_wi_primary_tech:
+                        tech = assigned
+                    else:
+                        tech = await User(serviceNow,CS.u_wi_primary_tech)
+                    customer = await User(serviceNow,CS.requested_for)
+                    LCMComp = await Computer(serviceNow,CS.u_asset_returned)
+                    # Returns ticket information if available #
+                    return {"CS":CS,"computer":Comp,"assigned":assigned,"technician":tech,"Customer":customer,"LCM computer": LCMComp}
+                elif accept == "n":
+                    print("You have declined the ticket, please restart when you want one.")
+        # if ticket is unavailable
+        else:
+            print("Ticket is not available (not in open or is already assigned). Please selected another ticket.")
             sys.exit(0)
+    except Exception as e:
+        logging.getLogger().exception(e)
+
+async def userAccept(username,computerInfo):
+    await computerInfo["CS"].updateCS(["assigned_to","u_wi_primary_tech"],[username,username])
+    await computerInfo["assigned"].__init__(computerInfo["CS"].serviceNow,computerInfo["CS"].assigned_to)
+    await computerInfo["technician"].__init__(computerInfo["CS"].serviceNow,computerInfo["CS"].u_wi_primary_tech)
+    await computerInfo["CS"].updateCS(["state","u_substate"],[2," "])
+    print("Ticket Type 1:",computerInfo["CS"].cat_item)
+    #Will be used to verify the correct computer is being used.
+    print("verifying device's serial")
+    c = wmi.WMI()
+    try:
+        serial = computerInfo["computer"].serial_number
+        print("Ticket serial number",serial)
+    except:
+        serial = computerInfo["CS"].serial_number
+        print("Ticket serial number",serial)
+            
+    cSerial = c.Win32_ComputerSystem()[0].Name
+    
+    if(serial != cSerial):
+        print("Please run me on {0}.".format(serial))
+        print("Exiting...")
+        input("Press any key to continue")
+        print("Ticket Type:",computerInfo["CS"].cat_item)
+        #sys.exit(0)
 
 # opens programs and features for tech
 def uninstallApp(ticketType):
@@ -72,10 +126,17 @@ def uninstallApp(ticketType):
     print(message)
     time.sleep(1)
     os.system('cmd /c appwiz.cpl') # opens programs and features
-    # Verifies with tech that changes have been made
-    removed = input("have all {0} programs been removed (y/n): ".format(proType))
-    if removed == "y":
-        return True
+    while True:
+        # Verifies with tech that changes have been made
+        removed = input("have all {0} programs been removed (y/n): ".format(proType))
+        if removed == "y":
+            return True
+        elif removed == "n":
+            print("I will open the window for you...")
+            time.sleep(1)
+            os.system('cmd /c appwiz.cpl') # opens programs and features
+        else:
+            print("Please respond y or n.")
 
 # Checks to see if computer needs to have an IPU ran
 async def reimage():
@@ -99,16 +160,6 @@ async def restart():
     time.sleep(1)
     os.system("shutdown /r /t 10") # set to restart computer after 10 seconds
 
-async def genTicket(serviceNow,CSNumber):
-    CS = await CompSup(serviceNow,CSNumber)
-    Comp = await Computer(serviceNow,CS.u_asset)
-    assigned = await User(serviceNow,CS.assigned_to)
-    tech = await User(serviceNow,CS.u_wi_primary_tech)
-    customer = await User(serviceNow,CS.requested_for)
-    LCMComp = await Computer(serviceNow,CS.u_asset_returned)
-    ticket = {"CS":CS,"computer":Comp,"assigned":assigned,"technician":tech,"Customer":customer,"LCM computer": LCMComp}
-    return ticket
-
 async def setState(computerInfo,state,__sysid__ = ""):
     if __sysid__ == "":
         __sysid__ = computerInfo["computer"].sys_id
@@ -119,29 +170,43 @@ async def setState(computerInfo,state,__sysid__ = ""):
         }
     if state == "In Use":
          # Assigns customer as assigned to
-        await computerInfo["computer"].updateHardware(__sysid__,"assigned_to", states[state]["assigned_to"])
+        await computerInfo["computer"].updateHardware(__sysid__,["assigned_to"], [states[state]["assigned_to"]])
     else:
-        await computerInfo["computer"].updateHardware(__sysid__,"stockroom",states[state]["stockroom"])    
+        await computerInfo["computer"].updateHardware(__sysid__,["stockroom"],[states[state]["stockroom"]])    
     # changes status to in use
-    await computerInfo["computer"].updateHardware(__sysid__,"install_status",states[state]["install_status"])
-    # Sets substatus to None
-    await computerInfo["computer"].updateHardware(__sysid__,"substatus",states[state]["substatus"])
+    await computerInfo["computer"].updateHardware(__sysid__,["install_status","substatus"],[states[state]["install_status"],states[state]["substatus"]])
 
 # checks if warranty is expired or not.
 async def warrantyCheck(computerInfo):
-    # adding support for personal devices
-    #if hardwareDict == {}:
-    #    print("Personal device warranty check is currently not supported.")
-    #    print("Please refer to specific manufacture's site to check.")
-    #YYYY-MM-DD
+    try:
+        expire_raw = computerInfo["computer"].warranty_expiration
+    except:
+        expire_raw = None
+        check = computerInfo["CS"].u_manufacturer.value
+
     today = datetime.datetime.now()
-    exp = datetime.datetime.strptime(computerInfo["computer"].warranty_expiration, "%Y-%m-%d")
-    if exp > today:
-        print("device's warranty expires %s" % exp)
-    elif exp == today:
-        print("device's warranty expires today")
-    elif exp < today:
-        print("device's warranty expired %s" % exp)
+    if expire_raw == None:
+        if check == "Dell":
+            site = "https://www.dell.com/support/home/en-us?app=warranty"
+        elif check == "HP":
+            site = "https://support.hp.com/us-en/checkwarranty"
+        elif check == "Lenovo":
+            site = "https://pcsupport.lenovo.com/us/en/warrantylookup#/"
+        elif check == "Microsoft":
+            site = "https://mybusinessservice.surface.com/en-US/CheckWarranty/CheckWarranty"
+        else:
+            site = "your manufacture's site"
+        print("No warranty information avaliable")
+        print("Please go to {0} to check current warranty info!".format(site))
+        # Connection for warranty API to check current warranty information
+    else:
+        exp = datetime.datetime.strptime(expire_raw, "%Y-%m-%d")
+        if exp > today:
+            print("device's warranty expires %s" % exp)
+        elif exp == today:
+            print("device's warranty expires today")
+        elif exp < today:
+            print("device's warranty expired %s" % exp)
 
 #Processes by ticket type
 async def __assignment__(computerInfo):
@@ -159,11 +224,9 @@ async def __return__(computerInfo):
         assoc = input("Is there an associated assignment Ticket (y/n): ")
         # if there is an associated assignment, reboots with intent of reimage
         if assoc == "y":
-            await computerInfo["CS"].updateCS("work_notes",
-                                        "System checked for licensed applications.")
+            await computerInfo["CS"].updateCS(["work_notes"],["System checked for licensed applications."])
             print("Please ensure an ethernet cable is securely connected before proceeding.")
-            await computerInfo["CS"].updateCS("work_notes",
-                                        "begin Win 10 1909 Fac/Staff imaging process via IPv4 PXE")
+            await computerInfo["CS"].updateCS(["work_notes"],["begin Win 10 1909 Fac/Staff imaging process via IPv4 PXE"])
         # Otherwise reboots with intent to erase all data
         print("Computer will restart shortly to erase data.")
         decide = input("continue (y/n): ")
@@ -178,16 +241,30 @@ async def __repair__(computerInfo):
     await warrantyCheck(computerInfo) # Checks warranty status
     # Checks for unauthorized programs
     if uninstallApp("repair"):
-        await computerInfo["CS"].updateCS("work_notes",
-                                    "System checked for nonstandard applications.")
+        await computerInfo["CS"].updateCS(["work_notes"],["System checked for nonstandard applications."])
         print("Check to make sure drivers have been updated.")
 
 
 async def __LCM__(computerInfo):
     print("I am an LCM")
-    await setState(computerInfo = computerInfo,__sysid__ = computerInfo["computer"].sys_id,state = "In Use")
-    await setState(computerInfo = computerInfo,__sysid__ = computerInfo["LCM computer"].sys_id,state = "LCMed")
-    
+    print(computerInfo["computer"].install_status.key)
+    if computerInfo["computer"].install_status.key != 1:
+        await setState(computerInfo = computerInfo,__sysid__ = computerInfo["computer"].sys_id,state = "In Use")
+    else:
+        if computerInfo["computer"].assigned_to == computerInfo["CS"].requested_for:
+            pass
+        else:
+            user = computerInfo["CS"].requested_for
+            await computerInfo["computer"].updateHardware(computerInfo["computer"].sys_id,["assigned_to"],[user])
+    while True:
+        resp = input("Do you have the original device (y/n): ")
+        if resp == "y":
+            await setState(computerInfo = computerInfo,__sysid__ = computerInfo["LCM computer"].sys_id,state = "LCMed")
+            break
+        elif resp == "n":
+            print("Please restart when you have the device...")
+            await computerInfo["CS"].updateCS("work_notes","Awaiting returned device.")
+            break
 
 # Starts loop
 asyncio.run(main())
